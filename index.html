@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pantalla</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<div class="tv" id="tv">
+  <div id="stage"><div class="tvmsg">Cargando anuncios…</div></div>
+  <button class="fsbtn" id="fs">Pantalla completa</button>
+</div>
+<script src="config.js"></script>
+<script>
+// Código compatible con navegadores de Smart TV antiguos (sin ?. ni ??)
+(function(){
+  var C = window.CONFIG, list = [], idx = 0, timer = null, current = null, firma = "";
+  var stage = document.getElementById("stage");
+
+  function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function url(a){ return C.SUPABASE_URL + "/storage/v1/object/public/anuncios/" + encodeURIComponent(a.archivo).replace(/%2F/g,"/"); }
+  function guardar(d){ try{ localStorage.setItem("anuncios", JSON.stringify(d)); }catch(e){} }
+  function leerCache(){ try{ return JSON.parse(localStorage.getItem("anuncios") || "[]"); }catch(e){ return []; } }
+
+  function cargar(){
+    fetch(C.SUPABASE_URL + "/rest/v1/anuncios?select=*&activo=eq.true&order=orden.asc", {
+      headers: { apikey: C.SUPABASE_KEY, Authorization: "Bearer " + C.SUPABASE_KEY }
+    }).then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function(d){
+        var f = JSON.stringify(d);
+        if (f !== firma){ firma = f; list = d; guardar(d); }
+        if (!current) siguiente();
+      })
+      .catch(function(){
+        // Sin internet: sigue con lo último que tenía guardado
+        if (!list.length){ list = leerCache(); }
+        if (!current) siguiente();
+      });
+  }
+
+  function overlay(a){
+    if (!a.titulo && !a.precio) return "";
+    return '<div class="overlay">' + (a.titulo ? '<div class="t">'+esc(a.titulo)+'</div>' : "") + (a.precio ? '<div class="p">'+esc(a.precio)+'</div>' : "") + '</div>';
+  }
+  function crear(a){
+    var el = document.createElement("div"); el.className = "slide";
+    if (a.tipo === "text"){
+      el.innerHTML = '<div class="textslide"><div class="t">'+esc(a.titulo)+'</div>' +
+        (a.precio ? '<div class="p">'+esc(a.precio)+'</div>' : "") +
+        (a.detalle ? '<div class="d">'+esc(a.detalle)+'</div>' : "") + '</div>';
+    } else if (a.tipo === "image"){
+      el.innerHTML = '<img src="'+url(a)+'" alt="">' + overlay(a);
+    } else {
+      el.innerHTML = '<video src="'+url(a)+'" muted playsinline autoplay preload="auto"></video>' + overlay(a);
+    }
+    return el;
+  }
+
+  function siguiente(){
+    clearTimeout(timer);
+    if (!list.length){
+      stage.innerHTML = '<div class="tvmsg">No hay anuncios activos.<br>Agrégalos desde el panel.</div>';
+      current = null; timer = setTimeout(siguiente, 5000); return;
+    }
+    var a = list[idx % list.length]; idx = (idx + 1) % list.length;
+    var el = crear(a), old = current; current = el;
+    var msgs = stage.querySelectorAll(".tvmsg"); for (var i=0;i<msgs.length;i++) msgs[i].parentNode.removeChild(msgs[i]);
+    stage.appendChild(el);
+    setTimeout(function(){ el.className = "slide on"; }, 50);
+    if (old) setTimeout(function(){ if (old.parentNode) old.parentNode.removeChild(old); }, 900);
+
+    if (a.tipo === "video"){
+      var v = el.querySelector("video");
+      v.onended = siguiente;
+      v.onerror = function(){ timer = setTimeout(siguiente, 1500); };
+      var p = v.play(); if (p && p.catch) p.catch(function(){});
+      timer = setTimeout(siguiente, 10*60*1000); // por si el video nunca termina
+    } else {
+      timer = setTimeout(siguiente, (a.duracion || 8) * 1000);
+    }
+  }
+
+  var fs = document.getElementById("fs");
+  function ocultarBoton(){ fs.style.display = "none"; }
+  fs.onclick = function(){
+    var d = document.documentElement, f = d.requestFullscreen || d.webkitRequestFullscreen;
+    if (f) { try { f.call(d); } catch(e){} }
+    ocultarBoton();
+  };
+  setTimeout(ocultarBoton, 20000);
+
+  cargar();
+  setInterval(cargar, (C.REFRESCO_SEG || 30) * 1000);
+  // Recarga completa cada 6 horas para evitar que el navegador del TV se llene de memoria
+  setTimeout(function(){ location.reload(); }, 6*60*60*1000);
+})();
+</script>
+</body>
+</html>

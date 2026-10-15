@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Panel · Pantallas del local</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+
+<form class="card login" id="login" hidden>
+  <h2>Entrar al panel</h2>
+  <div class="field"><label for="email">Correo</label><input id="email" type="email" required autocomplete="username"></div>
+  <div class="field"><label for="pass">Contraseña</label><input id="pass" type="password" required autocomplete="current-password"></div>
+  <button class="btn" style="width:100%">Entrar</button>
+  <div class="status" id="lstatus" role="status"></div>
+</form>
+
+<main class="panel" id="panel" hidden>
+  <div class="top">
+    <div>
+      <h1>Pantallas del local</h1>
+      <p>Los televisores toman los cambios en menos de un minuto.</p>
+    </div>
+    <div style="display:flex;gap:8px">
+      <a class="btn ghost" href="./" target="_blank" style="text-decoration:none">Ver pantalla</a>
+      <button class="btn ghost" id="logout">Salir</button>
+    </div>
+  </div>
+  <div class="grid">
+    <section>
+      <h2>Lista de reproducción</h2>
+      <div class="list" id="list"><div class="empty">Cargando…</div></div>
+    </section>
+    <section>
+      <h2>Agregar anuncio</h2>
+      <form class="card" id="form" autocomplete="off">
+        <div class="tabs" role="group" aria-label="Tipo de anuncio">
+          <button type="button" data-k="media" aria-pressed="true">Imagen o video</button>
+          <button type="button" data-k="text" aria-pressed="false">Solo texto</button>
+        </div>
+        <div class="field" id="fileField">
+          <label for="file">Archivo</label>
+          <input type="file" id="file" accept="image/*,video/mp4,video/webm">
+          <small>Hasta 50 MB. Ideal 1920×1080 horizontal; videos en MP4.</small>
+        </div>
+        <div class="field">
+          <label for="titulo">Título <span id="optT">(opcional)</span></label>
+          <input id="titulo" maxlength="60" placeholder="Palta Hass">
+        </div>
+        <div class="row">
+          <div class="field"><label for="precio">Precio</label><input id="precio" maxlength="20" placeholder="$2.990 kg"></div>
+          <div class="field"><label for="dur">Segundos</label><input id="dur" type="number" min="3" max="120" value="8"></div>
+        </div>
+        <div class="field" id="detField" hidden>
+          <label for="detalle">Detalle</label>
+          <textarea id="detalle" rows="2" maxlength="120" placeholder="Válido hasta el domingo o hasta agotar stock"></textarea>
+        </div>
+        <button class="btn" id="add" type="submit" style="width:100%">Agregar a la lista</button>
+        <div class="status" id="status" role="status"></div>
+      </form>
+    </section>
+  </div>
+</main>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+(async () => {
+  const C = window.CONFIG, $ = s => document.querySelector(s);
+  const sb = supabase.createClient(C.SUPABASE_URL, C.SUPABASE_KEY);
+  let items = [], kind = "media";
+
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const pub = a => sb.storage.from("anuncios").getPublicUrl(a.archivo).data.publicUrl;
+  const say = t => $("#status").textContent = t;
+
+  // ---- sesión ----
+  async function arrancar(){
+    const { data } = await sb.auth.getSession();
+    const ok = !!data.session;
+    $("#login").hidden = ok; $("#panel").hidden = !ok;
+    if (ok) cargar();
+  }
+  $("#login").addEventListener("submit", async e => {
+    e.preventDefault(); $("#lstatus").textContent = "Entrando…";
+    const { error } = await sb.auth.signInWithPassword({ email: $("#email").value, password: $("#pass").value });
+    $("#lstatus").textContent = error ? "Correo o contraseña incorrectos." : "";
+    if (!error) arrancar();
+  });
+  $("#logout").onclick = async () => { await sb.auth.signOut(); arrancar(); };
+
+  // ---- lista ----
+  async function cargar(){
+    const { data, error } = await sb.from("anuncios").select("*").order("orden");
+    if (error){ $("#list").innerHTML = '<div class="empty">No se pudo leer la lista: ' + esc(error.message) + '</div>'; return; }
+    items = data; pintar();
+  }
+  function pintar(){
+    const list = $("#list");
+    if (!items.length){ list.innerHTML = '<div class="empty">Aún no hay anuncios. Agrega el primero desde el formulario.</div>'; return; }
+    list.innerHTML = items.map((a,i) => {
+      const th = a.tipo === "image" ? `<img src="${pub(a)}" alt="">` : a.tipo === "video" ? `<video src="${pub(a)}" muted preload="metadata"></video>` : esc(a.titulo || "Texto");
+      const nombre = [a.titulo, a.precio].filter(Boolean).join(" — ") || "(sin título)";
+      const tipo = a.tipo === "video" ? "Video · dura lo que dure el video" : a.tipo === "image" ? "Imagen" : "Texto";
+      return `<div class="item ${a.activo ? "" : "off"}" data-id="${a.id}">
+        <div class="thumb">${th}</div>
+        <div class="meta"><b>${esc(nombre)}</b><span>${tipo}</span><br>
+          ${a.tipo !== "video" ? `<label>Segundos <input type="number" min="3" max="120" value="${a.duracion || 8}" data-act="dur"></label>` : ""}
+        </div>
+        <div class="actions">
+          <button class="btn small ghost" data-act="up" ${i===0?"disabled":""} aria-label="Subir">↑</button>
+          <button class="btn small ghost" data-act="down" ${i===items.length-1?"disabled":""} aria-label="Bajar">↓</button>
+          <button class="btn small ghost" data-act="toggle">${a.activo ? "Pausar" : "Mostrar"}</button>
+          <button class="btn small danger" data-act="del">Eliminar</button>
+        </div></div>`;
+    }).join("");
+  }
+  const upd = (id, cambios) => sb.from("anuncios").update(cambios).eq("id", id);
+
+  $("#list").addEventListener("click", async e => {
+    const b = e.target.closest("button[data-act]"); if (!b) return;
+    const id = b.closest(".item").dataset.id, i = items.findIndex(a => a.id === id), a = items[i], act = b.dataset.act;
+    if (act === "toggle") await upd(id, { activo: !a.activo });
+    if (act === "up" || act === "down"){
+      const o = items[act === "up" ? i-1 : i+1]; if (!o) return;
+      await upd(a.id, { orden: o.orden }); await upd(o.id, { orden: a.orden });
+    }
+    if (act === "del"){
+      if (!confirm("¿Eliminar este anuncio de todas las pantallas?")) return;
+      await sb.from("anuncios").delete().eq("id", id);
+      if (a.archivo) await sb.storage.from("anuncios").remove([a.archivo]);
+    }
+    cargar();
+  });
+  $("#list").addEventListener("change", async e => {
+    const inp = e.target.closest('input[data-act="dur"]'); if (!inp) return;
+    const v = Math.min(120, Math.max(3, parseInt(inp.value) || 8)); inp.value = v;
+    await upd(inp.closest(".item").dataset.id, { duracion: v });
+  });
+
+  // ---- formulario ----
+  document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+    kind = b.dataset.k;
+    document.querySelectorAll(".tabs button").forEach(x => x.setAttribute("aria-pressed", x === b));
+    $("#fileField").hidden = kind !== "media"; $("#detField").hidden = kind !== "text";
+    $("#optT").textContent = kind === "text" ? "" : "(opcional)";
+  });
+
+  $("#form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const fila = {
+      titulo: $("#titulo").value.trim(), precio: $("#precio").value.trim(),
+      duracion: Math.min(120, Math.max(3, parseInt($("#dur").value) || 8)),
+      orden: items.length ? Math.max(...items.map(a => a.orden || 0)) + 1 : 1, activo: true
+    };
+    $("#add").disabled = true;
+    try{
+      if (kind === "media"){
+        const f = $("#file").files[0];
+        if (!f) return say("Elige una imagen o un video.");
+        if (f.size > 50*1024*1024) return say("El archivo pesa más de 50 MB. Comprímelo e inténtalo de nuevo.");
+        say("Subiendo archivo…");
+        const ext = (f.name.split(".").pop() || "bin").toLowerCase();
+        const ruta = Date.now() + "-" + Math.random().toString(36).slice(2,8) + "." + ext;
+        const up = await sb.storage.from("anuncios").upload(ruta, f, { contentType: f.type, cacheControl: "86400" });
+        if (up.error) throw up.error;
+        fila.tipo = f.type.startsWith("video") ? "video" : "image"; fila.archivo = ruta;
+      } else {
+        if (!fila.titulo) return say("Escribe al menos un título.");
+        fila.tipo = "text"; fila.detalle = $("#detalle").value.trim();
+      }
+      const { error } = await sb.from("anuncios").insert(fila);
+      if (error) throw error;
+      $("#form").reset(); $("#dur").value = 8;
+      say("Agregado. Los televisores lo mostrarán en menos de un minuto.");
+      cargar();
+    }catch(err){ say("No se pudo agregar: " + (err.message || err)); }
+    finally{ $("#add").disabled = false; }
+  });
+
+  arrancar();
+})();
+</script>
+</body>
+</html>
